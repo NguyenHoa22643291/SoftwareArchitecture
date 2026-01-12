@@ -11,31 +11,51 @@ public class ChatController {
     @Autowired
     private StringRedisTemplate redisTemplate;
 
-    // Tên hàng đợi (Queue)
+    @Autowired
+    private JwtTokenProvider tokenProvider;
+
     private static final String QUEUE_NAME = "lab_chat_queue";
 
-    // 1. Gửi tin nhắn (PUSH)
-    // URL: http://localhost:8080/chat/send?user=Lan&message=Hello
+    // 1. Gửi tin nhắn (Sửa lại để lấy User từ JWT)
+    // URL cũ: /chat/send?user=Lan&message=Hello
+    // URL mới: /chat/send?message=Hello (User lấy từ Header Authorization)
     @PostMapping("/send")
-    public String sendMessage(@RequestParam String user, @RequestParam String message) {
-        String content = user + ": " + message;
+    public String sendMessage(@RequestHeader("Authorization") String token, @RequestParam String message) {
 
-        // Đẩy vào hàng đợi
-        redisTemplate.opsForList().leftPush(QUEUE_NAME, content);
+        // 1. Kiểm tra và cắt bỏ chữ "Bearer " (thường dài 7 ký tự)
+        if (token != null && token.startsWith("Bearer ")) {
+            String jwt = token.substring(7);
 
-        return "Đã gửi tin: " + content;
+            // 2. Validate Token
+            if (tokenProvider.validateToken(jwt)) {
+                // 3. Lấy tên người dùng từ Token
+                String userFromToken = tokenProvider.getUsernameFromJWT(jwt);
+
+                String content = userFromToken + ": " + message;
+                redisTemplate.opsForList().leftPush(QUEUE_NAME, content);
+                return "Đã gửi tin từ " + userFromToken + ": " + message;
+            }
+        }
+
+        return "Lỗi: Token không hợp lệ hoặc đã hết hạn!";
     }
 
-    // 2. Nhận tin nhắn (READ)
-    // URL: http://localhost:8080/chat/read
+    // 2. Nhận tin nhắn (Cũng cần bảo mật bằng Token)
     @GetMapping("/read")
-    public String readMessage() {
-        // Lấy ra khỏi hàng đợi
-        String msg = redisTemplate.opsForList().rightPop(QUEUE_NAME);
+    public String readMessage(@RequestHeader("Authorization") String token) {
 
-        if (msg == null) {
-            return "Hết tin nhắn rồi!";
+        if (token != null && token.startsWith("Bearer ")) {
+            String jwt = token.substring(7);
+
+            if (tokenProvider.validateToken(jwt)) {
+                String msg = redisTemplate.opsForList().rightPop(QUEUE_NAME);
+                if (msg == null) {
+                    return "Hàng đợi trống!";
+                }
+                return "Nội dung nhận được: " + msg;
+            }
         }
-        return "Nội dung nhận được: " + msg;
+
+        return "Lỗi: Bạn không có quyền đọc tin nhắn!";
     }
 }
